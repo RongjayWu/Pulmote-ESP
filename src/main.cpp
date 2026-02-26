@@ -21,13 +21,11 @@ MQTTManager mqtt_manager;
 DeviceManager device_manager;
 
 // ============== 引腳配置 ==============
-const uint8_t IR_RX_PIN = 15; // GPIO35 - IR 接收
-const uint8_t IR_TX_PIN = 4;  // GPIO13 - IR 發送
+const uint8_t IR_RX_PIN = 15; // GPIO15 - IR 接收
+const uint8_t IR_TX_PIN = 4;  // GPIO4 - IR 發送
 const uint8_t LED_PIN = 2;    // GPIO2 - 狀態 LED
 
-// ============== WiFi 和 MQTT 配置 ==============
-const char *WIFI_SSID = "YOUR_WIFI_SSID";
-const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// ============== MQTT 配置 ==============
 const char *MQTT_BROKER = "192.168.1.100";
 const uint16_t MQTT_PORT = 1883;
 const char *MQTT_CLIENT_ID = "pulmote-esp32";
@@ -52,6 +50,32 @@ void onMQTTMessage(const char *topic, const char *payload)
   }
 }
 
+// ============== LED 指示燈控制 ==============
+void updateLEDStatus()
+{
+  if (wifi_manager.isConnected())
+  {
+    digitalWrite(LED_PIN, HIGH); // WiFi 已連接，LED 常亮
+  }
+  else if (wifi_manager.isAPMode())
+  {
+    // AP 模式下，LED 閃爍（300ms 亮，100ms 暗）
+    unsigned long current = millis();
+    if ((current % 400) < 300)
+    {
+      digitalWrite(LED_PIN, HIGH);
+    }
+    else
+    {
+      digitalWrite(LED_PIN, LOW);
+    }
+  }
+  else
+  {
+    digitalWrite(LED_PIN, LOW); // 未連接，LED 滅
+  }
+}
+
 // ============== 初始化函數 ==============
 void setup()
 {
@@ -59,7 +83,9 @@ void setup()
   Serial.begin(115200);
   delay(2000);
 
-  Serial.println("\n\n=== Pulmote-ESP 啟動中 ===\n");
+  Serial.println("\n\n╔════════════════════════════════════╗");
+  Serial.println("║     Pulmote-ESP 系統啟動中...      ║");
+  Serial.println("╚════════════════════════════════════╝\n");
 
   // 初始化 LED
   pinMode(LED_PIN, OUTPUT);
@@ -68,18 +94,18 @@ void setup()
   // 1. 初始化 IR 管理器
   Serial.println("[1/4] 初始化紅外線管理器...");
   ir_manager.init(IR_RX_PIN, IR_TX_PIN);
-  Serial.println("✓ IR 管理器已初始化");
+  Serial.println("✓ IR 管理器已初始化\n");
 
-  // 2. 初始化 WiFi
-  Serial.println("[2/4] 初始化 WiFi...");
+  // 2. 初始化 WiFi 管理器
+  Serial.println("[2/4] 初始化 WiFi 管理器...");
   wifi_manager.init();
-  Serial.println("✓ WiFi 已初始化");
+  Serial.println("✓ WiFi 管理器已初始化\n");
 
-  // 3. 初始化 MQTT
+  // 3. 初始化 MQTT （延遲，等待 WiFi 連接）
   Serial.println("[3/4] 初始化 MQTT...");
   mqtt_manager.init();
   mqtt_manager.setCallback(onMQTTMessage);
-  Serial.println("✓ MQTT 已初始化");
+  Serial.println("✓ MQTT 已初始化\n");
 
   // 4. 初始化設備管理器
   Serial.println("[4/4] 初始化設備管理器...");
@@ -88,15 +114,25 @@ void setup()
   device_manager.addDevice(1, DEVICE_TV, "客廳電視");
   device_manager.addDevice(2, DEVICE_AC, "臥室冷氣");
   device_manager.addDevice(3, DEVICE_FAN, "客廳風扇");
-  Serial.println("✓ 設備管理器已初始化");
+  Serial.println("✓ 設備管理器已初始化\n");
 
-  Serial.println("\n=== 開始連接網路 ===\n");
+  Serial.println("╔════════════════════════════════════╗");
+  Serial.println("║     所有模組初始化完成！           ║");
+  Serial.println("╚════════════════════════════════════╝\n");
 
-  // 連接 WiFi
-  if (wifi_manager.connect(WIFI_SSID, WIFI_PASSWORD))
+  // 顯示 WiFi 狀態
+  if (wifi_manager.isAPMode())
   {
-    Serial.println("✓ WiFi 連接成功");
-    digitalWrite(LED_PIN, HIGH);
+    Serial.println("⚠️  當前在 AP 配置模式");
+    Serial.println("   SSID: Pulmote-ESP");
+    Serial.println("   Password: 123456789");
+    Serial.println("   IP: http://192.168.4.1");
+    Serial.println("   請使用手機連接此 WiFi 並進行配置\n");
+  }
+  else if (wifi_manager.isConnected())
+  {
+    Serial.println("✓ WiFi 已連接");
+    Serial.printf("  IP: %s\n\n", wifi_manager.getLocalIP().c_str());
 
     // 連接 MQTT
     if (mqtt_manager.connect(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID))
@@ -104,29 +140,25 @@ void setup()
       Serial.println("✓ MQTT 連接成功");
       mqtt_manager.subscribe("pulmote/device/+/command");
       mqtt_manager.subscribe("pulmote/scene/command");
-    }
-    else
-    {
-      Serial.println("✗ MQTT 連接失敗");
+      Serial.println();
     }
   }
-  else
-  {
-    Serial.println("✗ WiFi 連接失敗");
-    digitalWrite(LED_PIN, LOW);
-  }
-
-  Serial.println("\n=== 系統啟動完成 ===\n");
 }
 
 // ============== 主循環函數 ==============
 void loop()
 {
-  // 處理 WiFi 重連
+  // 更新 LED 狀態
+  updateLEDStatus();
+
+  // 處理 WiFi 重連和 AP 超時
   wifi_manager.handleReconnect();
 
+  // 處理 Web 服務器（AP 模式配置）
+  wifi_manager.handleWebServer();
+
   // 處理 MQTT 訊息
-  if (mqtt_manager.isConnected())
+  if (wifi_manager.isConnected() && mqtt_manager.isConnected())
   {
     mqtt_manager.loop();
   }
@@ -143,12 +175,14 @@ void loop()
   {
     last_status_publish = current_time;
 
-    if (mqtt_manager.isConnected())
+    if (wifi_manager.isConnected() && mqtt_manager.isConnected())
     {
       // 發佈狀態訊息
       mqtt_manager.publish("pulmote/status/online", "true", true);
-      mqtt_manager.publish("pulmote/status/wifi", wifi_manager.isConnected() ? "connected" : "disconnected");
-      mqtt_manager.publish("pulmote/status/mqtt", mqtt_manager.isConnected() ? "connected" : "disconnected");
+      mqtt_manager.publish("pulmote/status/wifi",
+                           wifi_manager.isConnected() ? "connected" : "disconnected");
+      mqtt_manager.publish("pulmote/status/mqtt",
+                           mqtt_manager.isConnected() ? "connected" : "disconnected");
     }
   }
 

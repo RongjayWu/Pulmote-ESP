@@ -71,11 +71,11 @@ Pulmote-ESP/
 ### 接線圖範例
 
 ```
-紅外線接收:    GPIO35 ── VS1838B (OUT) ── GND
+紅外線接收:    GPIO15 ── VS1838B (OUT) ── GND
               3.3V ── VS1838B (VCC)
               GND ── VS1838B (GND)
 
-紅外線發射:    GPIO13 ── 2N2222 (Base) ── 220Ω 電阻 ── GND
+紅外線發射:    GPIO4 ── 2N2222 (Base) ── 220Ω 電阻 ── GND
               5V ── IR LED ── 2N2222 (Collector)
               2N2222 (Emitter) ── GND
 ```
@@ -157,7 +157,7 @@ void getReceivedSignal();                           // 獲取接收訊號
 **使用範例**:
 
 ```cpp
-ir_manager.init(35, 13);        // GPIO35 接收，GPIO13 發射
+ir_manager.init(15, 4);        // GPIO15 接收，GPIO4 發射
 ir_manager.startLearning();     // 開始學習
 
 // 發送訊號
@@ -350,8 +350,8 @@ pulmote/status/mqtt                  - MQTT 連線狀態
 
 | 功能     | GPIO | 備註                   |
 | -------- | ---- | ---------------------- |
-| IR 接收  | 35   | INPUT，連接 VS1838B    |
-| IR 發射  | 13   | OUTPUT，驅動 IR LED    |
+| IR 接收  | 15   | INPUT，連接 VS1838B    |
+| IR 發射  | 4    | OUTPUT，驅動 IR LED    |
 | 狀態 LED | 2    | OUTPUT，連接狀態指示燈 |
 
 ---
@@ -410,8 +410,8 @@ const char* MQTT_CLIENT_ID = "pulmote-esp32";
 編輯 `src/main.cpp` 中的引腳定義:
 
 ```cpp
-const uint8_t IR_RX_PIN = 35;    // 改為實際的接收腳位
-const uint8_t IR_TX_PIN = 13;    // 改為實際的發射腳位
+const uint8_t IR_RX_PIN = 15;    // 改為實際的接收腳位
+const uint8_t IR_TX_PIN = 4;     // 改為實際的發射腳位
 const uint8_t LED_PIN = 2;       // 改為實際的 LED 腳位
 ```
 
@@ -467,7 +467,7 @@ pio device monitor --baud 115200
 **Q: IR 訊號無法接收**
 
 - 檢查紅外線接收模組連線
-- 確認 GPIO35 無其他衝突
+- 確認 GPIO15 無其他衝突
 - 電源是否穩定
 
 ---
