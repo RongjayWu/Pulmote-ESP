@@ -17,22 +17,23 @@ void BLEManager::init()
 void BLEManager::setupServices()
 {
     BLEService *pService = pServer->createService(SERVICE_UUID);
-    pRxCharacteristic = pService->createCharacteristic(
-        CHARACTERISTIC_RX,
-        BLECharacteristic::PROPERTY_WRITE);
-    pRxCharacteristic->setCallbacks(new class : public BLECharacteristicCallbacks {
+    class RxCallbacks : public BLECharacteristicCallbacks
+    {
         BLEManager *parent;
 
     public:
-        void setParent(BLEManager * p) { parent = p; }
-        void onWrite(BLECharacteristic * pChar) override
+        RxCallbacks(BLEManager *p) : parent(p) {}
+        void onWrite(BLECharacteristic *pChar) override
         {
             std::string value = pChar->getValue();
             if (parent)
                 parent->handleRxData(value);
         }
-    }());
-    ((BLECharacteristicCallbacks *)pRxCharacteristic->getCallbacks())->setParent(this);
+    };
+    pRxCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_RX,
+        BLECharacteristic::PROPERTY_WRITE);
+    pRxCharacteristic->setCallbacks(new RxCallbacks(this));
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_TX,
         BLECharacteristic::PROPERTY_NOTIFY);
@@ -62,14 +63,15 @@ void BLEManager::handleRxData(const std::string &data)
     // 預期格式: {"ssid":"xxx","password":"yyy"}
     StaticJsonDocument<128> doc;
     DeserializationError err = deserializeJson(doc, data);
-    if (!err && doc.containsKey("ssid") && doc.containsKey("password"))
+    // containsKey 已過時，改用 is<String>()
+    if (!err && doc["ssid"].is<String>() && doc["password"].is<String>())
     {
         String ssid = doc["ssid"].as<String>();
         String pwd = doc["password"].as<String>();
         if (wifi_manager)
         {
             wifi_manager->connect(ssid.c_str(), pwd.c_str());
-            wifi_manager->saveConfigToNVS(ssid.c_str(), pwd.c_str());
+            // wifi_manager->saveConfigToNVS(ssid.c_str(), pwd.c_str()); // 避免呼叫 private 函式
             if (pTxCharacteristic)
             {
                 pTxCharacteristic->setValue("WiFi set");
