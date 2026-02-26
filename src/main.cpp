@@ -13,12 +13,14 @@
 #include "wifi_manager.h"
 #include "mqtt_manager.h"
 #include "device_manager.h"
+#include "ble_manager.h"
 
 // ============== 全域物件宣告 ==============
 IRManager ir_manager;
 WiFiManager wifi_manager;
 MQTTManager mqtt_manager;
 DeviceManager device_manager;
+BLEManager ble_manager;
 
 // ============== 引腳配置 ==============
 const uint8_t IR_RX_PIN = 15; // GPIO15 - IR 接收
@@ -79,6 +81,11 @@ void updateLEDStatus()
 // ============== 初始化函數 ==============
 void setup()
 {
+  // 清除 WiFi 設定並重啟（僅用於重置，完成後請移除）
+  // wifi_manager.clearConfig();
+  // wifi_manager.disconnect();
+  // wifi_manager.startAPMode();
+  // ESP.restart();
   // 初始化序列埠（用於調試）
   Serial.begin(115200);
   delay(2000);
@@ -100,6 +107,11 @@ void setup()
   Serial.println("[2/4] 初始化 WiFi 管理器...");
   wifi_manager.init();
   Serial.println("✓ WiFi 管理器已初始化\n");
+
+  // 2.5 初始化 BLE 管理器
+  Serial.println("[2.5/4] 初始化 BLE 管理器...");
+  ble_manager.init();
+  Serial.println("✓ BLE 管理器已初始化\n");
 
   // 3. 初始化 MQTT （延遲，等待 WiFi 連接）
   Serial.println("[3/4] 初始化 MQTT...");
@@ -163,6 +175,8 @@ void loop()
     mqtt_manager.loop();
   }
 
+  // 呼叫 BLE 管理器的 loop 函數
+  ble_manager.loop();
   // 檢查是否有 IR 訊號
   if (ir_manager.hasSignal())
   {

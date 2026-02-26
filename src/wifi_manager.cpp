@@ -187,6 +187,8 @@ void WiFiManager::startAPMode()
         Serial.printf("[WiFi] SSID: %s\n", AP_SSID);
         Serial.printf("[WiFi] IP: %s\n", WiFi.softAPIP().toString().c_str());
         initWebServer();
+        // 啟動 DNS Server，將所有域名導向本機
+        dns_server.start(53, "*", AP_IP);
     }
     else
     {
@@ -318,6 +320,7 @@ void WiFiManager::handleWebServer()
 {
     if (is_ap_mode && web_server != nullptr)
     {
+        dns_server.processNextRequest();
         web_server->handleClient();
     }
 }

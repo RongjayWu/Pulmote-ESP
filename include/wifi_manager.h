@@ -20,10 +20,12 @@
  */
 
 #define AP_SSID "Pulmote-ESP"
-#define AP_PASSWORD "123456789"
+#define AP_PASSWORD "pulmote"
 #define AP_IP IPAddress(192, 168, 4, 1)
 #define AP_GATEWAY IPAddress(192, 168, 4, 1)
 #define AP_SUBNET IPAddress(255, 255, 255, 0)
+
+#include "../lib/DNSServer/DNSServer.h"
 
 class WiFiManager
 {
@@ -39,6 +41,8 @@ private:
 
     WebServer *web_server;
     Preferences preferences;
+
+    DNSServer dns_server;
 
     /**
      * @brief Initialize Web server (AP config UI)
