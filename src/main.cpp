@@ -82,9 +82,10 @@ void updateLEDStatus()
 void setup()
 {
   // 清除 WiFi 設定並重啟（僅用於重置，完成後請移除）
-  // wifi_manager.clearConfig();
-  // wifi_manager.disconnect();
-  // wifi_manager.startAPMode();
+  Preferences preferences;
+  preferences.begin("wifi_config", false);
+  preferences.clear(); // 清除該命名空間下所有 key
+  preferences.end();
   // ESP.restart();
   // 初始化序列埠（用於調試）
   Serial.begin(115200);
