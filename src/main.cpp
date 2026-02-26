@@ -20,7 +20,7 @@ IRManager ir_manager;
 WiFiManager wifi_manager;
 MQTTManager mqtt_manager;
 DeviceManager device_manager;
-BLEManager ble_manager;
+BLEManager ble_manager(&wifi_manager);
 
 // ============== 引腳配置 ==============
 const uint8_t IR_RX_PIN = 15; // GPIO15 - IR 接收
@@ -82,10 +82,10 @@ void updateLEDStatus()
 void setup()
 {
   // 清除 WiFi 設定並重啟（僅用於重置，完成後請移除）
-  Preferences preferences;
-  preferences.begin("wifi_config", false);
-  preferences.clear(); // 清除該命名空間下所有 key
-  preferences.end();
+  // Preferences preferences;
+  // preferences.begin("wifi_config", false);
+  // preferences.clear(); // 清除該命名空間下所有 key
+  // preferences.end();
   // ESP.restart();
   // 初始化序列埠（用於調試）
   Serial.begin(115200);

@@ -20,7 +20,7 @@
  */
 
 #define AP_SSID "Pulmote-ESP"
-#define AP_PASSWORD "pulmote"
+#define AP_PASSWORD "Pulmote-ESP"
 #define AP_IP IPAddress(192, 168, 4, 1)
 #define AP_GATEWAY IPAddress(192, 168, 4, 1)
 #define AP_SUBNET IPAddress(255, 255, 255, 0)
