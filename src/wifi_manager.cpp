@@ -1,354 +1,305 @@
-/**
- * @file wifi_manager.cpp
- * @brief WiFi Manager Implementation
- */
-
+// WiFiManager 模組 Source
 #include "wifi_manager.h"
-#include "html_config.h"
+#include "wifi_ap_html.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-WiFiManager::WiFiManager() : web_server(nullptr), is_sta_connected(false), is_ap_mode(false), last_reconnect_time(0), ap_start_time(0)
+WiFiManager::WiFiManager() // 建構子初始化
 {
-    memset(ssid, 0, sizeof(ssid));
-    memset(password, 0, sizeof(password));
+    dev_status_pin = 0;       // 預設狀態指示燈腳位
+    webServer = nullptr;      // 初始化 Web Server 指標為空
+    lastAttemptSsid = "";     // 初始化上次嘗試連接的 SSID 為空
+    lastAttemptPassword = ""; // 初始化上次嘗試連接的密碼為空
+    lastBlinkMillis = 0;
+    ledState = false;
+    blinkIntervalMs = 200; // 0.2 秒閃爍
 }
 
-void WiFiManager::init()
+void WiFiManager::init(uint16_t status_pin) // WiFi 初始化流程
 {
-    Serial.println("[WiFi] Initializing...");
-
-    if (!preferences.begin("wifi_config", false))
+    dev_status_pin = status_pin;
+    pinMode(dev_status_pin, OUTPUT);   // 設定狀態指示燈腳位為輸出
+    digitalWrite(dev_status_pin, LOW); // 預設狀態指示燈為關閉
+    // 初始化 Preferences（用於儲存/讀取 WiFi 與 AP 設定）
+    preferences.begin("wifi_config", false); // 讀寫模式
+    // 讀取並印出偏好設定內容供除錯
+    String storedSsid = preferences.getString("ssid", "");
+    String storedPwd = preferences.getString("password", "");
+    Serial.printf("Preferences read: ssid='%s' password_len=%u\n", storedSsid.c_str(), (unsigned)storedPwd.length());
+    WiFi.mode(WIFI_MODE_STA); // 設定 WiFi 模式為 Station
+    if (WiFi.status() == WL_CONNECTED)
     {
-        Serial.println("[WiFi] NVS init failed");
+        Serial.println("WiFiManager: already connected to WiFi");
     }
-
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.persistent(false);
-
-    is_sta_connected = false;
-    is_ap_mode = false;
-    last_reconnect_time = 0;
-
-    if (loadConfigFromNVS())
+    else if (storedSsid != "" && storedPwd != "") // 如果有儲存的SSID以及密碼，嘗試連接
     {
-        Serial.printf("[WiFi] Loaded SSID: %s\n", ssid);
-        if (connect(ssid, password))
-        {
-            is_sta_connected = true;
-            Serial.println("[WiFi] Connected!");
-        }
-        else
-        {
-            Serial.println("[WiFi] Failed, AP mode");
-            startAPMode();
-        }
+        Serial.println("WiFiManager: attempting to connect to WiFi with stored credentials");
+        WiFi.begin(storedSsid.c_str(), storedPwd.c_str());
     }
     else
     {
-        Serial.println("[WiFi] No config, AP mode");
-        startAPMode();
+        Serial.println("WiFiManager: not connected to WiFi, starting AP mode");
+        startAPMode(); // 如果未連接，啟動 AP 模式
     }
-
-    Serial.println("[WiFi] Init done");
+    preferences.end(); // 關閉 Preferences，釋放資源
 }
 
-bool WiFiManager::loadConfigFromNVS()
+void WiFiManager::handleConnect()
 {
-    if (!preferences.isKey("ssid"))
-        return false;
-
-    String saved_ssid = preferences.getString("ssid", "");
-    String saved_password = preferences.getString("password", "");
-
-    if (saved_ssid.length() > 0)
+    // If we have a cached user attempt, try that first
+    if (this->lastAttemptSsid.length() > 0)
     {
-        strncpy(ssid, saved_ssid.c_str(), sizeof(ssid) - 1);
-        strncpy(password, saved_password.c_str(), sizeof(password) - 1);
-        return true;
-    }
-
-    return false;
-}
-
-void WiFiManager::saveConfigToNVS(const char *_ssid, const char *_password)
-{
-    preferences.putString("ssid", _ssid);
-    preferences.putString("password", _password);
-    preferences.putULong("saved_time", millis());
-    Serial.printf("[WiFi] Saved: %s\n", _ssid);
-}
-
-void WiFiManager::initWebServer()
-{
-    if (web_server == nullptr)
-    {
-        web_server = new WebServer(80);
-
-        web_server->on("/", HTTP_GET, [this]()
-                       { handleRoot(); });
-        web_server->on("/api/scan", HTTP_GET, [this]()
-                       { handleScanNetworks(); });
-        web_server->on("/api/save", HTTP_POST, [this]()
-                       { handleSaveConfig(); });
-        web_server->on("/api/status", HTTP_GET, [this]()
-                       { handleStatus(); });
-
-        web_server->begin();
-        Serial.println("[WiFi] Web server at http://192.168.4.1");
-    }
-}
-
-void WiFiManager::handleRoot()
-{
-    web_server->send(200, "text/html; charset=utf-8", WIFI_CONFIG_HTML);
-}
-
-void WiFiManager::handleScanNetworks()
-{
-    Serial.println("[WiFi] Scan request");
-
-    int n = WiFi.scanNetworks();
-    String json = "[";
-
-    for (int i = 0; i < n; ++i)
-    {
-        if (i > 0)
-            json += ",";
-
-        json += "{\"ssid\":\"";
-        json += WiFi.SSID(i);
-        json += "\",\"rssi\":";
-        json += WiFi.RSSI(i);
-        json += "}";
-    }
-
-    json += "]";
-    web_server->send(200, "application/json", json);
-}
-
-void WiFiManager::handleSaveConfig()
-{
-    if (!web_server->hasArg("plain"))
-    {
-        web_server->send(400, "application/json", "{\"success\":false}");
+        Serial.printf("WiFiManager: handleConnect - trying cached ssid='%s'\n", this->lastAttemptSsid.c_str());
+        WiFi.mode(WIFI_MODE_APSTA);
+        WiFi.begin(this->lastAttemptSsid.c_str(), this->lastAttemptPassword.c_str());
+        if (!webServer)
+            startWebServer();
         return;
     }
 
-    String body = web_server->arg("plain");
+    // Otherwise read stored credentials from Preferences and try
+}
+// Debug endpoints removed per request
 
-    int ssid_start = body.indexOf("\"ssid\":\"") + 8;
-    int ssid_end = body.indexOf("\"", ssid_start);
-    String new_ssid = body.substring(ssid_start, ssid_end);
-
-    int pass_start = body.indexOf("\"password\":\"") + 12;
-    int pass_end = body.indexOf("\"", pass_start);
-    String new_password = body.substring(pass_start, pass_end);
-
-    if (new_ssid.length() == 0)
-    {
-        web_server->send(400, "application/json", "{\"success\":false,\"message\":\"Empty\"}");
+void WiFiManager::startWebServer() // 處理 Web Server 的 Client 請求
+{
+    if (webServer)
         return;
-    }
+    webServer = new WebServer(80);
 
-    saveConfigToNVS(new_ssid.c_str(), new_password.c_str());
-    strncpy(ssid, new_ssid.c_str(), sizeof(ssid) - 1);
-    strncpy(password, new_password.c_str(), sizeof(password) - 1);
+    webServer->on("/", [this]()
+                  {
+        if (webServer) webServer->send(200, "text/html", WIFI_AP_HTML); });
 
-    web_server->send(200, "application/json", "{\"success\":true}");
+    webServer->onNotFound([this]()
+                          {
+        if (webServer) webServer->send(404, "text/plain", "Not Found"); });
 
-    delay(5000);
-    ESP.restart();
+    // Scan networks (blocking). Returns JSON array of {ssid,rssi}.
+    webServer->on("/scan", HTTP_GET, [this]()
+                  {
+        int n = WiFi.scanNetworks();
+        String out = "[]";
+        if (n > 0) {
+            out = "[";
+            for (int i = 0; i < n; ++i) {
+                if (i) out += ',';
+                out += '{';
+                out += String("\"ssid\":\"") + WiFi.SSID(i) + String("\"");
+                out += String(",\"rssi\":") + String(WiFi.RSSI(i));
+                out += '}';
+            }
+            out += ']';
+        }
+        if (webServer) webServer->send(200, "application/json", out); });
+
+    // Connect (POST form: ssid, pass)
+    webServer->on("/connect", HTTP_POST, [this]()
+                  {
+        String ssid = webServer->hasArg("ssid") ? webServer->arg("ssid") : String();
+        String pass = webServer->hasArg("pass") ? webServer->arg("pass") : String();
+        if (ssid.length() == 0) {
+            if (webServer) webServer->send(400, "text/plain", "ssid required");
+            return;
+        }
+        Serial.printf("HTTP /connect received ssid='%s' pass_len=%u\n", ssid.c_str(), (unsigned)pass.length());
+        // cache last attempt
+        this->lastAttemptSsid = ssid;
+        this->lastAttemptPassword = pass;
+        // persist credentials so device can auto reconnect later
+        preferences.begin("wifi_config", false);
+        preferences.putString("ssid", ssid);
+        preferences.putString("password", pass);
+        Serial.printf("Preferences write: ssid='%s' password_len=%u\n", ssid.c_str(), (unsigned)pass.length());
+        preferences.end();
+        // start connecting
+        WiFi.mode(WIFI_MODE_APSTA);
+        WiFi.begin(ssid.c_str(), pass.c_str());
+        if (webServer) webServer->send(200, "text/plain", "connecting"); });
+
+    // No status/debug endpoints (removed per request)
+
+    webServer->begin();
 }
 
-void WiFiManager::handleStatus()
+void WiFiManager::stopWebServer()
 {
-    String json = "{";
-    json += "\"sta_connected\":" + String(is_sta_connected ? "true" : "false") + ",";
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-    json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
-    json += "}";
-
-    web_server->send(200, "application/json", json);
+    if (!webServer)
+        return;
+    webServer->stop();
+    delete webServer;
+    webServer = nullptr;
 }
-
-void WiFiManager::startAPMode()
+void WiFiManager::startAPMode() // 啟動 AP 模式
 {
-    Serial.println("[WiFi] Starting AP...");
-
-    is_ap_mode = true;
-    ap_start_time = millis();
-
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
-    bool ap_ok = WiFi.softAP(AP_SSID, AP_PASSWORD);
-
-    if (ap_ok)
+    if (isAPActive())
     {
-        Serial.printf("[WiFi] SSID: %s\n", AP_SSID);
-        Serial.printf("[WiFi] IP: %s\n", WiFi.softAPIP().toString().c_str());
-        initWebServer();
-        // 啟動 DNS Server，將所有域名導向本機
-        dns_server.start(53, "*", AP_IP);
+        return; // 已經為 AP 模式，無需重啟
+    }
+    Serial.println("WiFiManager: starting AP mode");
+    // 使用 AP+STA 模式，避免影響 Station 功能
+    WiFi.mode(WIFI_MODE_APSTA);
+    // 臨時開啟 Preferences、讀取 AP SSID / 密碼，讀取完立即 end()
+    preferences.begin("wifi_config", false);
+    String apSsid = preferences.getString("ap_ssid", "Pulmote-ESP");
+    String apPass = preferences.getString("ap_pass", "Pulmote-ESP");
+    Serial.printf("Preferences read (AP): ap_ssid='%s' ap_pass_len=%u\n", apSsid.c_str(), (unsigned)apPass.length());
+    preferences.end();
+    bool ok = false;
+    if (apPass.length() >= 8)
+    {
+        Serial.println("WiFiManager: starting secured softAP");
+        ok = WiFi.softAP(apSsid.c_str(), apPass.c_str());
     }
     else
     {
-        Serial.println("[WiFi] AP start failed");
+        Serial.println("WiFiManager: starting open softAP (note: password must be at least 8 characters for a secured AP)");
+        ok = WiFi.softAP(apSsid.c_str());
     }
+    if (!ok)
+    {
+        Serial.println("WiFiManager: softAP start failed");
+    }
+    // 啟動 Web Server 供設定使用
+    startWebServer();
 }
 
 void WiFiManager::stopAPMode()
 {
-    if (is_ap_mode)
+    if (!isAPActive())
     {
-        WiFi.mode(WIFI_STA);
-        is_ap_mode = false;
-
-        if (web_server != nullptr)
-        {
-            web_server->stop();
-            delete web_server;
-            web_server = nullptr;
-        }
-
-        Serial.println("[WiFi] AP stopped");
+        return; // 非 AP 模式，無需處理
     }
-}
-
-bool WiFiManager::connect(const char *_ssid, const char *_password)
-{
-    Serial.printf("[WiFi] Connecting to %s...\n", _ssid);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(_ssid, _password);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 40)
-    {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        is_sta_connected = true;
-        strncpy(ssid, _ssid, sizeof(ssid) - 1);
-        strncpy(password, _password, sizeof(password) - 1);
-
-        Serial.println(" OK");
-        Serial.printf("[WiFi] IP: %s\n", WiFi.localIP().toString().c_str());
-        return true;
-    }
-    else
-    {
-        is_sta_connected = false;
-        Serial.println(" FAIL");
-        return false;
-    }
-}
-
-bool WiFiManager::isConnected()
-{
-    return WiFi.status() == WL_CONNECTED;
-}
-
-bool WiFiManager::isAPMode()
-{
-    return is_ap_mode;
-}
-
-String WiFiManager::getLocalIP()
-{
-    if (is_sta_connected && WiFi.status() == WL_CONNECTED)
-    {
-        return WiFi.localIP().toString();
-    }
-    return "0.0.0.0";
-}
-
-void WiFiManager::scanNetworks()
-{
-    Serial.println("[WiFi] Scanning...");
-    int n = WiFi.scanNetworks();
-
-    if (n == 0)
-    {
-        Serial.println("[WiFi] No networks");
-        return;
-    }
-
-    Serial.printf("[WiFi] Found %d networks\n", n);
-}
-
-void WiFiManager::handleReconnect()
-{
-    if (is_ap_mode)
-    {
-        if (isConnected())
-        {
-            stopAPMode();
-            return;
-        }
-
-        if (millis() - ap_start_time > ap_timeout)
-        {
-            Serial.println("[WiFi] AP timeout");
-            delay(1000);
-            ESP.restart();
-        }
-    }
-    else
-    {
-        if (!isConnected())
-        {
-            unsigned long current_time = millis();
-
-            if (current_time - last_reconnect_time >= reconnect_interval)
-            {
-                last_reconnect_time = current_time;
-                WiFi.reconnect();
-            }
-        }
-        else
-        {
-            is_sta_connected = true;
-        }
-    }
-}
-
-void WiFiManager::handleWebServer()
-{
-    if (is_ap_mode && web_server != nullptr)
-    {
-        dns_server.processNextRequest();
-        web_server->handleClient();
-    }
-}
-
-void WiFiManager::disconnect()
-{
-    WiFi.disconnect(true);
-    is_sta_connected = false;
-}
-
-String WiFiManager::getAPSSID()
-{
-    return String(AP_SSID);
-}
-
-void WiFiManager::clearConfig()
-{
-    preferences.clear();
-    memset(ssid, 0, sizeof(ssid));
-    memset(password, 0, sizeof(password));
+    Serial.println("WiFiManager: stopping AP mode");
+    // 停止 Web Server
+    stopWebServer();
+    // 停用 softAP（true 表示等待關閉）
+    WiFi.softAPdisconnect(true);
+    // 將模式設回 STA（若需要保留 STA 能力）
+    WiFi.mode(WIFI_MODE_STA);
 }
 
 WiFiManager::~WiFiManager()
 {
-    if (web_server != nullptr)
+    if (webServer)
     {
-        delete web_server;
-        web_server = nullptr;
+        webServer->stop();
+        delete webServer;
+        webServer = nullptr;
     }
+    // Ensure Preferences is closed; safe to call even if not open
     preferences.end();
+}
+
+bool WiFiManager::isAPActive()
+{
+    // 對 ESP32 Arduino core：WiFi.getMode() 回傳 wifi_mode_t
+    // 當模式為 WIFI_MODE_AP 或 WIFI_MODE_APSTA 時表示 AP 已啟用
+    wifi_mode_t mode = WiFi.getMode();
+    if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA)
+    {
+        return true;
+    }
+    return false;
+}
+
+void WiFiManager::statusPinControl() // 控制狀態指示燈
+{
+    switch (WiFi.status())
+    {
+    case WL_DISCONNECTED:
+        /* 未連線：以非阻塞方式每 0.2 秒切換 LED指示燈 */
+        if ((unsigned long)(millis() - lastBlinkMillis) >= blinkIntervalMs)
+        {
+            lastBlinkMillis = millis();
+            ledState = !ledState;
+            digitalWrite(dev_status_pin, ledState ? HIGH : LOW);
+        }
+        break;
+    case WL_CONNECTED:
+        /* 已連線： 常亮並重置閃爍狀態*/
+        digitalWrite(dev_status_pin, HIGH);
+        ledState = false;
+        lastBlinkMillis = millis();
+        break;
+    case WL_CONNECT_FAILED:
+        /* 連線失敗：以非阻塞方式每 0.2 秒切換 LED指示燈*/
+        if ((unsigned long)(millis() - lastBlinkMillis) >= blinkIntervalMs)
+        {
+            lastBlinkMillis = millis();
+            ledState = !ledState;
+            digitalWrite(dev_status_pin, ledState ? HIGH : LOW);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void WiFiManager::loop() // 主循環處理
+{
+    static int prevWifiStatus = -1;
+    int currWifiStatus = WiFi.status();
+
+    // Handle status transitions for persist-on-success and clear-on-fail
+    if (currWifiStatus != prevWifiStatus)
+    {
+        if (currWifiStatus == WL_CONNECTED)
+        {
+            if (this->lastAttemptSsid.length() > 0 && WiFi.SSID() == this->lastAttemptSsid)
+            {
+                // Persist credentials on successful connection
+                preferences.begin("wifi_config", false);
+                preferences.putString("ssid", this->lastAttemptSsid);
+                preferences.putString("password", this->lastAttemptPassword);
+                preferences.end();
+                Serial.printf("WiFiManager: persisted credentials for ssid='%s'\n", this->lastAttemptSsid.c_str());
+                // clear cached attempt
+                this->lastAttemptSsid = "";
+                this->lastAttemptPassword = "";
+            }
+        }
+        else if (currWifiStatus == WL_CONNECT_FAILED)
+        {
+            // On immediate connect failure, clear cached attempt to avoid persisting wrong password
+            if (this->lastAttemptSsid.length() > 0)
+            {
+                Serial.println("WiFiManager: connect failed for cached attempt, clearing cached credentials");
+                this->lastAttemptSsid = "";
+                this->lastAttemptPassword = "";
+            }
+        }
+        prevWifiStatus = currWifiStatus;
+    }
+
+    switch (currWifiStatus)
+    {
+    case WL_DISCONNECTED:
+        /*如果WiFi未連接且AP Mode未開啟，則開啟AP Mode*/
+        if (!WiFi.isConnected() && !isAPActive())
+        {
+            startAPMode();
+        }
+        break;
+    case WL_CONNECTED:
+        /*關閉AP Mode並且關閉web server*/
+        if (WiFi.isConnected() && isAPActive())
+        {
+            stopAPMode();
+        }
+        break;
+    case WL_CONNECT_FAILED:
+        /*保持AP Mode開啟並且開啟web server*/
+        if (!WiFi.isConnected() && !isAPActive())
+        {
+            startAPMode();
+        }
+        break;
+    default:
+        break;
+    }
+    statusPinControl(); // 控制狀態指示燈
+    // 處理 WebServer client（若啟動）
+    if (webServer)
+        webServer->handleClient();
 }

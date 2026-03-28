@@ -2,6 +2,9 @@
 #define IR_MANAGER_H
 
 #include <Arduino.h>
+#include <IRremoteESP8266.h>
+#include <IRrecv.h>
+#include <IRsend.h>
 
 /**
  * @file ir_manager.h
@@ -15,47 +18,22 @@
 
 class IRManager
 {
+public:
+    IRManager();
+    void init(uint16_t rx_pin, uint16_t tx_pin, uint16_t status_pin);
+    void startLearning();
+    void stopLearning();
+    void sendSignal(const uint16_t *data, uint16_t length);
+    bool hasSignal();
+    void getReceivedSignal();
+    void loop();
+    ~IRManager();
+
 private:
     uint16_t ir_receive_pin;
     uint16_t ir_send_pin;
+    uint16_t dev_status_pin;
     bool is_learning;
-
-public:
-    /**
-     * @brief 初始化紅外線管理器
-     * @param rx_pin 接收腳位
-     * @param tx_pin 發送腳位
-     */
-    void init(uint16_t rx_pin, uint16_t tx_pin);
-
-    /**
-     * @brief 進入學習模式 - 接收遙控器訊號
-     * @return 學習到的訊號數據
-     */
-    void startLearning();
-
-    /**
-     * @brief 停止學習模式
-     */
-    void stopLearning();
-
-    /**
-     * @brief 發送紅外線訊號
-     * @param data 訊號數據
-     * @param length 訊號長度
-     */
-    void sendSignal(const uint16_t *data, uint16_t length);
-
-    /**
-     * @brief 檢查是否有接收到訊號
-     * @return 是否有新訊號
-     */
-    bool hasSignal();
-
-    /**
-     * @brief 獲取接收到的訊號
-     */
-    void getReceivedSignal();
 };
 
 #endif // IR_MANAGER_H

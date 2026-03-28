@@ -12,19 +12,15 @@
 class BLEManager
 {
 public:
-    BLEManager(WiFiManager *wifiMgr);
+    BLEManager();
     void init();
     void loop();
-    void setParameter(const String &key, const String &value);
-    String getParameter(const String &key);
 
 private:
     BLEServer *pServer;
     BLECharacteristic *pRxCharacteristic;
     BLECharacteristic *pTxCharacteristic;
     void setupServices();
-    WiFiManager *wifi_manager;
-    static void onRxWrite(BLECharacteristic *pCharacteristic, esp_ble_gatts_cb_param_t *param, void *arg);
     void handleRxData(const std::string &data);
 };
 
